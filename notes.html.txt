@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ملاحظاتي</title>
+  <style>
+    body { font-family: system-ui, Arial; margin: 24px; background: #f7f7f9; color: #222; }
+    header { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+    input, textarea, button, select { font-size: 14px; padding: 8px; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .grow { flex: 1; }
+    .danger { background: #fee2e2; border: 1px solid #fecaca; }
+    .primary { background: #111827; color: #fff; border: none; }
+    .outline { background: #fff; border: 1px solid #d1d5db; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    @media (max-width: 800px){ .split { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h2 style="margin:0;">ملاحظاتي</h2>
+    <div class="toolbar">
+      <input id="q" placeholder="بحث في العناوين والمحتوى..." />
+      <select id="sort">
+        <option value="desc">الأحدث أولاً</option>
+        <option value="asc">الأقدم أولاً</option>
+        <option value="title">حسب العنوان</option>
+      </select>
+      <button id="export" class="outline">تصدير CSV</button>
+      <label class="outline" style="padding: 6px 8px; cursor: pointer;">
+        استيراد CSV <input id="import" type="file" accept=".csv" style="display:none;">
+      </label>
+    </div>
+  </header>
+
+  <section class="split">
+    <input id="title" class="grow" placeholder="عنوان الملاحظة" />
+    <div class="row">
+      <button id="save" class="primary">حفظ</button>
+      <button id="new" class="outline">جديدة</button>
+    </div>
+    <textarea id="content" rows="6" placeholder="اكتب ملاحظتك هنا..."></textarea>
+    <div class="muted" id="status"></div>
+  </section>
+
+  <section id="list" class="grid"></section>
+
+  <script>
+    const KEY = 'notes-app-v1';
+    const $ = s => document.querySelector(s);
+    const $$ = s => Array.from(document.querySelectorAll(s));
+    const state = { notes: [], activeId: null, q: '', sort: 'desc' };
+
+    function uid(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+    function nowISO(){ return new Date().toISOString(); }
+    function load(){ try { state.notes = JSON.parse(localStorage.getItem(KEY)) || []; } catch { state.notes = []; } }
+    function save(){ localStorage.setItem(KEY, JSON.stringify(state.notes)); }
+
+    function setActive(note){
+      state.activeId = note ? note.id : null;
+      $('#title').value = note ? note.title : '';
+      $('#content').value = note ? note.content : '';
+      $('#status').textContent = note ? `آخر تعديل: ${new Date(note.updatedAt).toLocaleString('ar')}` : '';
+    }
+
+    function upsertNote(){
+      const title = $('#title').value.trim();
+      const content = $('#content').value.trim();
+      if(!title && !content){ alert('الملاحظة فارغة'); return; }
+      if(state.activeId){
+        const n = state.notes.find(n => n.id === state.activeId);
+        if(n){ n.title = title; n.content = content; n.updatedAt = nowISO(); }
+      } else {
+        state.notes.unshift({ id: uid(), title, content, createdAt: nowISO(), updatedAt: nowISO() });
+      }
+      save(); render(); setActive(null);
+    }
+
+    function del(id){
+      if(!confirm('حذف هذه الملاحظة؟')) return;
+      state.notes = state.notes.filter(n => n.id !== id);
+      save(); render();
+      if(state.activeId === id) setActive(null);
+    }
+
+    function filterSort(list){
+      const q = state.q.toLowerCase();
+      let out = q ? list.filter(n => (n.title+n.content).toLowerCase().includes(q)) : [...list];
+      if(state.sort === 'title') out.sort((a,b)=> a.title.localeCompare(b.title,'ar'));
+      else if(state.sort === 'asc') out.sort((a,b)=> new Date(a.updatedAt)-new Date(b.updatedAt));
+      else out.sort((a,b)=> new Date(b.updatedAt)-new Date(a.updatedAt));
+      return out;
+    }
+
+    function render(){
+      const container = $('#list');
+      container.innerHTML = '';
+      for(const n of filterSort(state.notes)){
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <strong>${n.title || '(بدون عنوان)'}</strong>
+          <div class="muted">${new Date(n.updatedAt).toLocaleString('ar')}</div>
+          <div class="row">
+            <button class="outline" data-edit="${n.id}">تعديل</button>
+            <button class="danger" data-del="${n.id}">حذف</button>
+          </div>
+          <div class="muted">${(n.content || '').slice(0,160)}</div>
+        `;
+        container.appendChild(card);
+      }
+      container.addEventListener('click', onListClick, { once: true });
+    }
+
+    function onListClick(e){
+      const idEdit = e.target.getAttribute('data-edit');
+      const idDel = e.target.getAttribute('data-del');
+      if(idEdit){
+        const n = state.notes.find(n => n.id === idEdit);
+        if(n) setActive(n);
+      } else if(idDel){
+        del(idDel);
+      }
+    }
+
+    function exportCSV(){
+      const rows = [['id','title','content','createdAt','updatedAt'], ...state.notes.map(n=>[n.id,n.title,n.content,n.createdAt,n.updatedAt])];
+      const csv = rows.map(r=> r.map(x=> `"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'notes.csv';
+      a.click(); URL.revokeObjectURL(a.href);
+    }
+
+    function importCSV(file){
+      const reader = new FileReader();
+      reader.onload = () => {
+        const lines = reader.result.split(/\r?\n/).filter(Boolean);
+        const [header, ...rest] = lines;
+        const cols = header.split(',').map(s=>s.replace(/^"|"$/g,''));
+        const idx = c => cols.indexOf(c);
+        const next = [];
+        for(const line of rest){
+          const cells = line.match(/("([^"]|"")*"|[^,]+)/g)?.map(c=>c.replace(/^"|"$/g,'').replace(/""/g,'"')) || [];
+          next.push({
+            id: cells[idx('id')] || uid(),
+            title: cells[idx('title')] || '',
+            content: cells[idx('content')] || '',
+            createdAt: cells[idx('createdAt')] || nowISO(),
+            updatedAt: cells[idx('updatedAt')] || nowISO(),
+          });
+        }
+        state.notes = next; save(); render(); alert('تم الاستيراد');
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+
+    // Events
+    $('#save').onclick = upsertNote;
+    $('#new').onclick = ()=> setActive(null);
+    $('#q').oninput = e => { state.q = e.target.value; render(); };
+    $('#sort').onchange = e => { state.sort = e.target.value; render(); };
+    $('#export').onclick = exportCSV;
+    $('#import').onchange = e => e.target.files[0] && importCSV(e.target.files[0]);
+
+    // Init
+    load(); render(); setActive(null);
+  </script>
+</body>
+</html>
